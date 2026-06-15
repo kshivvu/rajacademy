@@ -14,6 +14,7 @@ interface Student {
   "Teacher Remark"?: string;
   "Status"?: string;
   "Batch"?: string;
+  "Class"?: string;
 }
 
 export default function Dashboard() {
@@ -156,6 +157,10 @@ export default function Dashboard() {
     const marks = getValue(student, ["Math Test Marks"]);
     const maxMarks = getValue(student, ["Max Marks"]) || "20";
     const remarks = getValue(student, ["Teacher Remarks", "Teacher Remark"]);
+    const studentClass = getValue(student, ["Class", "class"]);
+    
+    // Format class string
+    const classLabel = studentClass ? ` (Class ${studentClass})` : "";
     
     // Parse percentage
     let pct = 0;
@@ -173,7 +178,7 @@ export default function Dashboard() {
       messageBody = 
         `Raj Academy — Urgent Update ⚠️\n\n` +
         `Dear Parent,\n\n` +
-        `I am writing to share the math test report for *${name}* for the week ending *${date}*.\n\n` +
+        `I am writing to share the math test report for *${name}*${classLabel} for the week ending *${date}*.\n\n` +
         `🔹 *Attendance*: ${attendance}\n` +
         `🔹 *Weekly Math Test*: ${marks} / ${maxMarks} (${pct}%)\n` +
         `🔹 *Teacher's Feedback*: "${remarks}"\n\n` +
@@ -186,7 +191,7 @@ export default function Dashboard() {
       messageBody = 
         `Raj Academy — Weekly Report 📊\n\n` +
         `Dear Parent,\n\n` +
-        `Here is the academic progress report for *${name}* for the week ending *${date}*:\n\n` +
+        `Here is the academic progress report for *${name}*${classLabel} for the week ending *${date}*:\n\n` +
         `🔹 *Attendance*: ${attendance}\n` +
         `🔹 *Weekly Math Test*: ${marks} / ${maxMarks} (${pct}%)\n` +
         `🔹 *Teacher's Feedback*: "${remarks}"\n\n` +
@@ -588,9 +593,12 @@ export default function Dashboard() {
                   {filteredStudents.map(s => {
                     const name = getValue(s, ["Student Name"]);
                     const batch = getValue(s, ["Batch"]);
+                    const studentClass = getValue(s, ["Class", "class"]);
+                    const classTag = studentClass ? `Class ${studentClass} - ` : "";
+                    
                     return (
                       <option key={name} value={name}>
-                        {name} ({getNormalizedBatch(batch)})
+                        {name} ({classTag}{getNormalizedBatch(batch)})
                       </option>
                     );
                   })}
@@ -768,6 +776,7 @@ export default function Dashboard() {
                   <thead>
                     <tr>
                       <th>Student Name</th>
+                      <th>Class</th>
                       <th>Batch</th>
                       <th>Attendance</th>
                       <th>Test Score (20)</th>
@@ -785,6 +794,7 @@ export default function Dashboard() {
                       const remarks = getValue(student, ["Teacher Remarks", "Teacher Remark"]);
                       const status = getValue(student, ["Status"]);
                       const batch = getValue(student, ["Batch"]);
+                      const studentClass = getValue(student, ["Class", "class"]);
 
                       // Grade badge computation
                       let pct = 0;
@@ -804,6 +814,11 @@ export default function Dashboard() {
                       return (
                         <tr key={name}>
                           <td><strong>{name}</strong></td>
+                          <td>
+                            <span className={styles.badge} style={{ backgroundColor: "#E0F2FE", color: "#0369A1", fontWeight: 700 }}>
+                              Class {studentClass || "—"}
+                            </span>
+                          </td>
                           <td><span className={styles.badge} style={{ backgroundColor: "#F1F5F9", color: "var(--charcoal)" }}>{getNormalizedBatch(batch)} Slot</span></td>
                           <td>{att || "0/0 Days"}</td>
                           <td>
@@ -822,7 +837,7 @@ export default function Dashboard() {
                           <td>
                             <button 
                               onClick={() => triggerSingleSend(student)}
-                              className={`${styles.btn} ${styles.btnWhatsapp}`}
+                              className={`${styles.btn} ${styles.btnAddress || styles.btnWhatsapp}`}
                             >
                               Send WhatsApp
                             </button>
