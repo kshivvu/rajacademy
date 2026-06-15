@@ -17,6 +17,15 @@ interface Student {
   "Class"?: string;
 }
 
+const REMARK_PRESETS = [
+  "Good performance, keep it up!",
+  "Excellent understanding of concepts.",
+  "Very attentive and active in class.",
+  "Needs to practice calculations more.",
+  "Did not submit homework. Needs improvement.",
+  "Absent for weekly test."
+];
+
 export default function Dashboard() {
   // Navigation & Config
   const [currentView, setCurrentView] = useState<"dashboard" | "teacher-input" | "settings">("dashboard");
@@ -38,15 +47,20 @@ export default function Dashboard() {
   // Filters
   const [selectedBatchFilter, setSelectedBatchFilter] = useState("All");
 
-  // Teacher Input Mode - Selection & Submission
-  const [teacherSelectedName, setTeacherSelectedName] = useState("");
-  const [teacherScore, setTeacherScore] = useState("15");
-  const [teacherRemarks, setTeacherRemarks] = useState("");
+  // Teacher Input Mode - Batch Entry Form States
+  // Store grades: { [studentName]: { marks: string, remarks: string } }
+  const [batchGrades, setBatchGrades] = useState<Record<string, { marks: string; remarks: string }>>({});
+  // Store attendance checklist: { [studentName]: boolean } (true = Present, false = Absent)
+  const [attendanceChecklist, setAttendanceChecklist] = useState<Record<string, boolean>>({});
+  
   const [teacherSubmitting, setTeacherSubmitting] = useState(false);
   const [inputDate, setInputDate] = useState("");
 
-  // Attendance Checklist state: { [studentName]: boolean }
-  const [attendanceChecklist, setAttendanceChecklist] = useState<Record<string, boolean>>({});
+  // WhatsApp Broadcast Wizard State
+  const [broadcastQueue, setBroadcastQueue] = useState<Student[]>([]);
+  const [currentQueueIndex, setCurrentQueueIndex] = useState<number>(-1);
+  const [isSendingBroadcast, setIsSendingBroadcast] = useState(false);
+  const [apiUpdatingStatus, setApiUpdatingStatus] = useState(false);
 
   // Robust helper to get case-insensitive and spelling-flexible values from the Google Sheets JSON
   const getValue = (student: Student, keys: string[]): string => {
@@ -102,14 +116,22 @@ export default function Dashboard() {
       if (resData.status === "success") {
         setStudents(resData.data);
         
-        // Initialize attendance checklist with all present (true)
+        // Populate initial batch grades and attendance from fetched data
+        const initialGrades: Record<string, { marks: string; remarks: string }> = {};
         const initialAttendance: Record<string, boolean> = {};
+        
         resData.data.forEach((st: Student) => {
           const name = getValue(st, ["Student Name"]);
           if (name) {
-            initialAttendance[name] = true;
+            initialGrades[name] = {
+              marks: getValue(st, ["Math Test Marks"]),
+              remarks: getValue(st, ["Teacher Remarks", "Teacher Remark"])
+            };
+            initialAttendance[name] = true; // Default all to Present for the day
           }
         });
+        
+        setBatchGrades(initialGrades);
         setAttendanceChecklist(initialAttendance);
       } else {
         setErrorMsg(resData.message || "Failed to load spreadsheet data.");
@@ -143,8 +165,6 @@ export default function Dashboard() {
   const handleExitTeacherMode = () => {
     setIsPinVerified(false);
     setEnteredPin("");
-    setTeacherSelectedName("");
-    setTeacherRemarks("");
     setCurrentView("dashboard");
   };
 
@@ -235,8 +255,8 @@ export default function Dashboard() {
     }
   };
 
-  // 7. Action: Send All Pending sequentially
-  const handleSendAllPending = async () => {
+  // 7. Action: Send All Pending (Initiates step-by-step Broadcast Wizard)
+  const handleSendAllPending = () => {
     const pendingStudents = students.filter(st => {
       const studentBatch = getNormalizedBatch(getValue(st, ["Batch"]));
       const batchMatch = selectedBatchFilter === "All" || studentBatch === selectedBatchFilter;
@@ -249,126 +269,73 @@ export default function Dashboard() {
       return;
     }
 
-    const confirmSend = confirm(
-      `This will open WhatsApp tabs for ${pendingStudents.length} students sequentially with a 2-second delay. Please ensure your browser allows popups.`
+    setBroadcastQueue(pendingStudents);
+    setCurrentQueueIndex(0);
+    setIsSendingBroadcast(true);
+  };
+
+  const handleSendCurrentWizard = async () => {
+    if (currentQueueIndex < 0 || currentQueueIndex >= broadcastQueue.length) return;
+    
+    const student = broadcastQueue[currentQueueIndex];
+    const name = getValue(student, ["Student Name"]);
+    const { url } = getWhatsAppDetails(student);
+    
+    // 1. Open WhatsApp chat window
+    window.open(url, "_blank");
+
+    // 2. Optimistic UI update
+    setStudents(prev => 
+      prev.map(st => getValue(st, ["Student Name"]) === name ? { ...st, Status: "Sent" } : st)
     );
-    if (!confirmSend) return;
 
-    setStatusMsg("Triggering broadcasts...");
-
-    // Loop through with 2s delay
-    for (let i = 0; i < pendingStudents.length; i++) {
-      const student = pendingStudents[i];
-      const { url } = getWhatsAppDetails(student);
-      
-      // Delay wrapper
-      await new Promise<void>((resolve) => {
-        setTimeout(() => {
-          window.open(url, "_blank");
-          resolve();
-        }, i === 0 ? 0 : 2000);
-      });
-    }
-
-    // Call API to bulk update status to "Sent"
+    // 3. Update status in Google Sheets in background
     if (scriptUrl) {
+      setApiUpdatingStatus(true);
       try {
-        setStatusMsg("Updating statuses in Google Sheets...");
-        const updates = pendingStudents.map(st => ({ name: getValue(st, ["Student Name"]), status: "Sent" }));
-        const response = await fetch(scriptUrl, {
+        await fetch(scriptUrl, {
           method: "POST",
           body: JSON.stringify({
             action: "updateStatus",
-            updates
+            updates: [{ name: name, status: "Sent" }]
           })
         });
-        const result = await response.json();
-        
-        if (result.status === "success") {
-          setStatusMsg("All pending reports opened and marked as Sent!");
-          fetchStudents();
-        } else {
-          setErrorMsg("Failed to update status column in Sheets.");
-        }
-      } catch (err) {
-        setErrorMsg("Network error updating sheet status.");
+      } catch (e) {
+        console.error("Failed to update status in Google Sheet", e);
+      } finally {
+        setApiUpdatingStatus(false);
       }
-    } else {
-      // Local fallback only
-      setStudents(prev =>
-        prev.map(st => {
-          const name = getValue(st, ["Student Name"]);
-          const isPending = pendingStudents.some(p => getValue(p, ["Student Name"]) === name);
-          return isPending ? { ...st, Status: "Sent" } : st;
-        })
-      );
-      setStatusMsg("Sent locally (No script API configured).");
     }
 
-    setTimeout(() => setStatusMsg(""), 5000);
-  };
-
-  // 8. Submit grades from Teacher View
-  const handleGradeSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!teacherSelectedName) {
-      alert("Please select a student.");
-      return;
-    }
-
-    setTeacherSubmitting(true);
-    setStatusMsg("Saving grades...");
-    
-    try {
-      const payload = {
-        action: "submitGrades",
-        studentName: teacherSelectedName,
-        marks: teacherScore,
-        remarks: teacherRemarks,
-        date: inputDate,
-        status: "Pending" // Reset to pending when new marks are added
-      };
-
-      if (scriptUrl) {
-        const response = await fetch(scriptUrl, {
-          method: "POST",
-          body: JSON.stringify(payload)
-        });
-        const resData = await response.json();
-        if (resData.status === "success") {
-          setStatusMsg(`Saved grades for ${teacherSelectedName}!`);
-          setTeacherRemarks("");
-          setTeacherSelectedName("");
-          fetchStudents();
-        } else {
-          setErrorMsg(resData.message || "Failed to submit grades to sheet.");
-        }
-      } else {
-        // Local fallback
-        setStudents(prev => 
-          prev.map(st => getValue(st, ["Student Name"]) === teacherSelectedName ? {
-            ...st,
-            "Math Test Marks": teacherScore,
-            "Teacher Remarks": teacherRemarks,
-            "Week Date": inputDate,
-            "Status": "Pending"
-          } : st)
-        );
-        setStatusMsg("Saved locally (No script URL configured).");
-      }
-    } catch (err) {
-      setErrorMsg("Failed to connect to Google Apps Script API.");
-    } finally {
-      setTeacherSubmitting(false);
+    // 4. Advance queue
+    if (currentQueueIndex + 1 >= broadcastQueue.length) {
+      setStatusMsg("🎉 All reports in queue processed!");
+      setIsSendingBroadcast(false);
+      setBroadcastQueue([]);
+      setCurrentQueueIndex(-1);
+      fetchStudents();
       setTimeout(() => setStatusMsg(""), 5000);
+    } else {
+      setCurrentQueueIndex(prev => prev + 1);
     }
   };
 
-  // 9. Submit attendance checklist in bulk for a batch
-  const handleAttendanceSubmit = async (e: React.FormEvent) => {
+  const handleSkipCurrentWizard = () => {
+    if (currentQueueIndex + 1 >= broadcastQueue.length) {
+      setIsSendingBroadcast(false);
+      setBroadcastQueue([]);
+      setCurrentQueueIndex(-1);
+      fetchStudents();
+    } else {
+      setCurrentQueueIndex(prev => prev + 1);
+    }
+  };
+
+  // 8. Submit Unified Batch Attendance & Grades in 1 single API Call!
+  const handleBatchSessionSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Filter students to the currently selected filter batch (or slot time)
+    // Filter students to the currently selected filter batch
     const batchStudents = students.filter(st => {
       const studentBatch = getNormalizedBatch(getValue(st, ["Batch"]));
       const targetBatch = selectedBatchFilter === "All" ? studentBatch : selectedBatchFilter;
@@ -376,17 +343,18 @@ export default function Dashboard() {
     });
 
     if (batchStudents.length === 0) {
-      alert("Please select a specific batch time (e.g. 3pm) to submit attendance checklist.");
+      alert("Please select a specific batch slot (e.g. 3pm) at the top of the page before submitting.");
       return;
     }
 
     setTeacherSubmitting(true);
-    setStatusMsg("Saving attendance updates...");
+    setStatusMsg("Saving weekly grades and attendance checklist...");
 
     const updates = batchStudents.map(student => {
       const name = getValue(student, ["Student Name"]);
       const isPresent = attendanceChecklist[name] !== false; // Default true
       
+      // Compute updated attendance string
       const attendanceStr = getValue(student, ["Attendance"]) || "0/0 Days";
       let attended = 0;
       let total = 0;
@@ -398,10 +366,9 @@ export default function Dashboard() {
           total = parseInt(parts[1]) || 0;
         } catch (e) {}
       } else if (attendanceStr !== "") {
-        // Fallback if it is a raw number (e.g. '5')
         try {
           attended = parseInt(attendanceStr) || 0;
-          total = attended; // Assume current total equals current attended, then increment
+          total = attended;
         } catch(e) {}
       }
 
@@ -410,9 +377,16 @@ export default function Dashboard() {
       }
       total += 1;
 
+      // Get grade values from the form inputs
+      const studentGrade = batchGrades[name] || { marks: "", remarks: "" };
+
       return {
         name,
-        attendance: `${attended}/${total} Days`
+        attendance: `${attended}/${total} Days`,
+        marks: studentGrade.marks,
+        remarks: studentGrade.remarks,
+        date: inputDate,
+        status: "Pending" // Reset to pending for the new report
       };
     });
 
@@ -421,16 +395,16 @@ export default function Dashboard() {
         const response = await fetch(scriptUrl, {
           method: "POST",
           body: JSON.stringify({
-            action: "submitAttendance",
+            action: "submitBatchData",
             updates
           })
         });
         const resData = await response.json();
         if (resData.status === "success") {
-          setStatusMsg("Attendance checklist updated successfully!");
+          setStatusMsg(`Successfully saved attendance & grades for all ${batchStudents.length} students!`);
           fetchStudents();
         } else {
-          setErrorMsg(resData.message || "Failed to update attendance checklist.");
+          setErrorMsg(resData.message || "Failed to update batch data in Google Sheets.");
         }
       } else {
         // Local fallback
@@ -438,13 +412,20 @@ export default function Dashboard() {
           prev.map(st => {
             const name = getValue(st, ["Student Name"]);
             const match = updates.find(u => u.name === name);
-            return match ? { ...st, Attendance: match.attendance } : st;
+            return match ? {
+              ...st,
+              Attendance: match.attendance,
+              "Math Test Marks": match.marks,
+              "Teacher Remarks": match.remarks,
+              "Week Date": match.date,
+              Status: match.status
+            } : st;
           })
         );
-        setStatusMsg("Attendance updated locally.");
+        setStatusMsg("Batch data saved locally.");
       }
     } catch (err) {
-      setErrorMsg("Network error updating attendance in Google Sheet.");
+      setErrorMsg("Network error saving batch session data.");
     } finally {
       setTeacherSubmitting(false);
       setTimeout(() => setStatusMsg(""), 5000);
@@ -491,11 +472,10 @@ export default function Dashboard() {
           }
         } catch(e){}
       } else if (attStr && !isNaN(parseFloat(attStr))) {
-        // Fallback for raw numbers
         try {
           const val = parseFloat(attStr);
           attendedSum += val;
-          possibleAttendedSum += val; // Assume out of same
+          possibleAttendedSum += val;
         } catch(e){}
       }
     });
@@ -538,11 +518,37 @@ export default function Dashboard() {
         </div>
       </header>
 
+      {/* FILTER & BATCH ACTION BAR (Shown at the top of both views) */}
+      <div className={styles.filterBar} style={{ marginBottom: "20px" }}>
+        <div className={styles.filterGroup}>
+          {["All", "3pm", "4pm", "5pm", "6pm", "7pm"].map(batch => (
+            <button
+              key={batch}
+              onClick={() => setSelectedBatchFilter(batch)}
+              className={`${styles.filterBtn} ${selectedBatchFilter === batch ? styles.filterBtnActive : ""}`}
+            >
+              {batch === "All" ? "All Batches" : `${batch} Slot`}
+            </button>
+          ))}
+        </div>
+        {currentView === "dashboard" && (
+          <div>
+            <button 
+              onClick={handleSendAllPending}
+              className={`${styles.btn} ${styles.btnPrimary}`}
+              style={{ gap: "6px" }}
+            >
+              📨 Send All Pending
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* NOTIFICATIONS & ERRORS */}
       {statusMsg && <div className={styles.alertBox} style={{ backgroundColor: "#D1FAE5", color: "#065F46", borderLeftColor: "#10B981" }}>{statusMsg}</div>}
       {errorMsg && <div className={styles.alertBox} style={{ backgroundColor: "#FEE2E2", color: "#991B1B", borderLeftColor: "#EF4444" }}>{errorMsg}</div>}
 
-      {/* VIEW: TEACHER SECURE ENTRY DIALOG (BEFORE VERIFICATION) */}
+      {/* VIEW: TEACHER SECURE ENTRY DIALOG (BEFORE PIN VERIFICATION) */}
       {currentView === "teacher-input" && !isPinVerified && (
         <div className={styles.pinContainer}>
           <h2>Enter Security PIN</h2>
@@ -566,147 +572,200 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* VIEW: TEACHER INPUT PANEL (AFTER VERIFICATION) */}
+      {/* VIEW: UNIFIED BATCH LOGGER PANEL (AFTER VERIFICATION) */}
       {currentView === "teacher-input" && isPinVerified && (
-        <div className={styles.teacherGrid}>
-          
-          {/* Card A: Submit Test Score */}
-          <div className={styles.formCard}>
-            <h2>Submit Weekly Grade</h2>
-            <form onSubmit={handleGradeSubmit}>
-              
-              <div className={styles.formGroup}>
-                <label>Select Student</label>
-                <select 
-                  className={styles.formControl}
-                  value={teacherSelectedName}
-                  onChange={e => {
-                    const st = students.find(s => getValue(s, ["Student Name"]) === e.target.value);
-                    setTeacherSelectedName(e.target.value);
-                    if (st) {
-                      setTeacherScore(getValue(st, ["Math Test Marks"]) || "15");
-                      setTeacherRemarks(getValue(st, ["Teacher Remarks", "Teacher Remark"]) || "");
-                    }
-                  }}
-                >
-                  <option value="">-- Choose Student --</option>
-                  {filteredStudents.map(s => {
-                    const name = getValue(s, ["Student Name"]);
-                    const batch = getValue(s, ["Batch"]);
-                    const studentClass = getValue(s, ["Class", "class"]);
-                    const classTag = studentClass ? `Class ${studentClass} - ` : "";
-                    
-                    return (
-                      <option key={name} value={name}>
-                        {name} ({classTag}{getNormalizedBatch(batch)})
-                      </option>
-                    );
-                  })}
-                </select>
+        <div style={{ marginTop: "10px" }}>
+          {selectedBatchFilter === "All" ? (
+            <div className={styles.pinContainer} style={{ maxWidth: "500px", margin: "40px auto" }}>
+              <h2>⚠️ Select a Batch Slot</h2>
+              <p style={{ fontSize: "14px", color: "var(--muted)", margin: "10px 0 20px" }}>
+                To record daily attendance and marks, please select a specific batch slot at the top (e.g., 3pm, 4pm, etc.).
+              </p>
+              <div style={{ display: "flex", justifyContent: "center", gap: "10px" }}>
+                {["3pm", "4pm", "5pm", "6pm", "7pm"].map(slot => (
+                  <button 
+                    key={slot} 
+                    onClick={() => setSelectedBatchFilter(slot)} 
+                    className={`${styles.btn} ${styles.btnOutline}`}
+                  >
+                    {slot}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className={styles.formCard} style={{ maxWidth: "100%", overflow: "hidden" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1.5px solid var(--line)", paddingBottom: "12px", marginBottom: "20px", flexWrap: "wrap", gap: "12px" }}>
+                <div>
+                  <h2 style={{ borderBottom: "none", paddingBottom: 0, marginBottom: "2px" }}>
+                    Batch Session Logger — <span>{selectedBatchFilter} Slot</span>
+                  </h2>
+                  <p style={{ fontSize: "13px", color: "var(--muted)" }}>
+                    Enter attendance and test scores for all students in this slot simultaneously.
+                  </p>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <label style={{ fontSize: "13px", fontWeight: 700, color: "var(--charcoal)" }}>Session Date:</label>
+                  <input 
+                    type="date" 
+                    className={styles.formControl} 
+                    style={{ width: "160px", padding: "6px 10px" }}
+                    value={inputDate}
+                    onChange={e => setInputDate(e.target.value)}
+                  />
+                </div>
               </div>
 
-              <div className={styles.formGroup}>
-                <label>Math Test Score (out of 20)</label>
-                <input 
-                  type="number" 
-                  min={0} 
-                  max={20} 
-                  className={styles.formControl}
-                  value={teacherScore}
-                  onChange={e => setTeacherScore(e.target.value)}
-                />
-              </div>
-
-              <div className={styles.formGroup}>
-                <label>Week Date</label>
-                <input 
-                  type="date" 
-                  className={styles.formControl} 
-                  value={inputDate}
-                  onChange={e => setInputDate(e.target.value)}
-                />
-              </div>
-
-              <div className={styles.formGroup}>
-                <label>Teacher Remarks &amp; Feedback</label>
-                <textarea 
-                  rows={4}
-                  className={styles.formControl}
-                  value={teacherRemarks}
-                  onChange={e => setTeacherRemarks(e.target.value)}
-                  placeholder="e.g. Excellent grasp of concepts, showing good progress."
-                />
-              </div>
-
-              <button 
-                type="submit" 
-                disabled={teacherSubmitting}
-                className={`${styles.btn} ${styles.btnPrimary}`}
-                style={{ width: "100%" }}
-              >
-                {teacherSubmitting ? "Saving..." : "Submit Student Grade"}
-              </button>
-            </form>
-          </div>
-
-          {/* Card B: Batch Daily Attendance checklist */}
-          <div className={styles.formCard}>
-            <h2>Mark Daily Attendance</h2>
-            <p style={{ fontSize: "12px", color: "var(--muted)", marginBottom: "15px" }}>
-              Update attendance records for the selected batch slot: <strong>{selectedBatchFilter}</strong>
-            </p>
-            
-            {selectedBatchFilter === "All" ? (
-              <div className={styles.alertBox} style={{ fontSize: "12px", padding: "10px" }}>
-                ⚠️ Please select a specific batch filter time (e.g. 3pm, 4pm) at the top of the dashboard to mark daily attendance.
-              </div>
-            ) : (
-              <form onSubmit={handleAttendanceSubmit}>
-                <div className={styles.attendanceList}>
+              <form onSubmit={handleBatchSessionSubmit}>
+                <div className={styles.tableContainer} style={{ marginBottom: "24px" }}>
                   {filteredStudents.length === 0 ? (
-                    <p style={{ padding: "15px", textAlign: "center", color: "var(--muted)" }}>No students in this batch.</p>
+                    <div style={{ padding: "40px", textAlign: "center", color: "var(--muted)" }}>
+                      No students are currently assigned to the **{selectedBatchFilter}** slot in your Google Sheet.
+                    </div>
                   ) : (
-                    filteredStudents.map(student => {
-                      const name = getValue(student, ["Student Name"]);
-                      const isPresent = attendanceChecklist[name] !== false; // default true
-                      
-                      return (
-                        <div key={name} className={styles.attendanceItem}>
-                          <strong>{name}</strong>
-                          <div className={styles.attendanceToggle}>
-                            <button
-                              type="button"
-                              className={isPresent ? styles.presentActive : ""}
-                              onClick={() => setAttendanceChecklist(prev => ({ ...prev, [name]: true }))}
-                            >
-                              Present
-                            </button>
-                            <button
-                              type="button"
-                              className={!isPresent ? styles.absentActive : ""}
-                              onClick={() => setAttendanceChecklist(prev => ({ ...prev, [name]: false }))}
-                            >
-                              Absent
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })
+                    <table style={{ minWidth: "750px" }}>
+                      <thead>
+                        <tr>
+                          <th style={{ width: "20%" }}>Student Name</th>
+                          <th style={{ width: "10%" }}>Class</th>
+                          <th style={{ width: "20%", textAlign: "center" }}>Daily Attendance</th>
+                          <th style={{ width: "15%" }}>Score (out of 20)</th>
+                          <th style={{ width: "35%" }}>Weekly Teacher Remarks</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredStudents.map(student => {
+                          const name = getValue(student, ["Student Name"]);
+                          const studentClass = getValue(student, ["Class", "class"]);
+                          const isPresent = attendanceChecklist[name] !== false;
+                          const currentData = batchGrades[name] || { marks: "", remarks: "" };
+
+                          return (
+                            <tr key={name}>
+                              <td><strong>{name}</strong></td>
+                              <td>
+                                <span className={styles.badge} style={{ backgroundColor: "#E0F2FE", color: "#0369A1", fontWeight: 700 }}>
+                                  Class {studentClass || "—"}
+                                </span>
+                              </td>
+                              <td style={{ textAlign: "center" }}>
+                                <div className={styles.attendanceToggle} style={{ display: "inline-flex" }}>
+                                  <button
+                                    type="button"
+                                    className={isPresent ? styles.presentActive : ""}
+                                    onClick={() => {
+                                      setAttendanceChecklist(prev => ({ ...prev, [name]: true }));
+                                      // If it was preset to absent-remarks, clear it
+                                      if (currentData.remarks === "Absent for weekly test.") {
+                                        setBatchGrades(prev => ({
+                                          ...prev,
+                                          [name]: { ...currentData, remarks: "" }
+                                        }));
+                                      }
+                                    }}
+                                  >
+                                    Present
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={!isPresent ? styles.absentActive : ""}
+                                    onClick={() => {
+                                      setAttendanceChecklist(prev => ({ ...prev, [name]: false }));
+                                      // Auto-fill Absent details
+                                      setBatchGrades(prev => ({
+                                        ...prev,
+                                        [name]: { marks: "0", remarks: "Absent for weekly test." }
+                                      }));
+                                    }}
+                                  >
+                                    Absent
+                                  </button>
+                                </div>
+                              </td>
+                              <td>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={20}
+                                  placeholder="Marks"
+                                  className={styles.formControl}
+                                  style={{ padding: "6px" }}
+                                  value={currentData.marks}
+                                  onChange={e => setBatchGrades(prev => ({
+                                    ...prev,
+                                    [name]: { ...currentData, marks: e.target.value }
+                                  }))}
+                                />
+                              </td>
+                              <td>
+                                <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                                  <input
+                                    type="text"
+                                    placeholder="remarks..."
+                                    className={styles.formControl}
+                                    style={{ padding: "6px", flex: 1 }}
+                                    value={currentData.remarks}
+                                    onChange={e => setBatchGrades(prev => ({
+                                      ...prev,
+                                      [name]: { ...currentData, remarks: e.target.value }
+                                    }))}
+                                  />
+                                  <select
+                                    className={styles.presetSelect}
+                                    style={{ 
+                                      padding: "6px", 
+                                      width: "110px", 
+                                      fontSize: "12px", 
+                                      borderRadius: "var(--border-radius)", 
+                                      border: "1.5px solid var(--line)",
+                                      backgroundColor: "#F8FAFC",
+                                      cursor: "pointer"
+                                    }}
+                                    onChange={e => {
+                                      if (e.target.value) {
+                                        setBatchGrades(prev => ({
+                                          ...prev,
+                                          [name]: { ...currentData, remarks: e.target.value }
+                                        }));
+                                        e.target.value = ""; // Reset select element
+                                      }
+                                    }}
+                                  >
+                                    <option value="">⚡ Presets</option>
+                                    {REMARK_PRESETS.map(preset => (
+                                      <option key={preset} value={preset}>{preset}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   )}
                 </div>
 
-                <button 
-                  type="submit" 
-                  disabled={teacherSubmitting || filteredStudents.length === 0}
-                  className={`${styles.btn} ${styles.btnGold}`}
-                  style={{ width: "100%" }}
-                >
-                  {teacherSubmitting ? "Updating..." : `Submit Daily Attendance (${selectedBatchFilter})`}
-                </button>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px" }}>
+                  <button 
+                    type="button" 
+                    onClick={handleExitTeacherMode} 
+                    className={`${styles.btn} ${styles.btnOutline}`}
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit" 
+                    disabled={teacherSubmitting || filteredStudents.length === 0}
+                    className={`${styles.btn} ${styles.btnPrimary}`}
+                    style={{ minWidth: "200px" }}
+                  >
+                    {teacherSubmitting ? "Saving Logs..." : `💾 Save Session Data (${selectedBatchFilter})`}
+                  </button>
+                </div>
               </form>
-            )}
-          </div>
-
+            </div>
+          )}
         </div>
       )}
 
@@ -726,30 +785,6 @@ export default function Dashboard() {
             <div className={styles.statCard} style={{ borderLeftColor: "#10B981" }}>
               <h3>Weekly Attendance</h3>
               <div className="value">{attendanceRate.toFixed(1)}%</div>
-            </div>
-          </div>
-
-          {/* FILTER & BATCH ACTION BAR */}
-          <div className={styles.filterBar}>
-            <div className={styles.filterGroup}>
-              {["All", "3pm", "4pm", "5pm", "6pm", "7pm"].map(batch => (
-                <button
-                  key={batch}
-                  onClick={() => setSelectedBatchFilter(batch)}
-                  className={`${styles.filterBtn} ${selectedBatchFilter === batch ? styles.filterBtnActive : ""}`}
-                >
-                  {batch === "All" ? "All Batches" : `${batch} Slot`}
-                </button>
-              ))}
-            </div>
-            <div>
-              <button 
-                onClick={handleSendAllPending}
-                className={`${styles.btn} ${styles.btnPrimary}`}
-                style={{ gap: "6px" }}
-              >
-                📨 Send All Pending
-              </button>
             </div>
           </div>
 
@@ -837,7 +872,7 @@ export default function Dashboard() {
                           <td>
                             <button 
                               onClick={() => triggerSingleSend(student)}
-                              className={`${styles.btn} ${styles.btnAddress || styles.btnWhatsapp}`}
+                              className={`${styles.btn} ${styles.btnWhatsapp}`}
                             >
                               Send WhatsApp
                             </button>
@@ -894,6 +929,168 @@ export default function Dashboard() {
               </button>
               <button onClick={() => setShowSettingsModal(false)} className={`${styles.btn} ${styles.btnOutline}`}>
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: WHATSAPP BROADCAST WIZARD */}
+      {isSendingBroadcast && broadcastQueue.length > 0 && currentQueueIndex >= 0 && currentQueueIndex < broadcastQueue.length && (
+        <div className={styles.modalOverlay}>
+          <div className={styles.modalContent} style={{ maxWidth: "550px", width: "95%" }}>
+            <div className={styles.modalHeader}>
+              <h2>WhatsApp Broadcast Queue</h2>
+              <button 
+                onClick={() => {
+                  setIsSendingBroadcast(false);
+                  setBroadcastQueue([]);
+                  setCurrentQueueIndex(-1);
+                  fetchStudents();
+                }} 
+                className={styles.modalClose}
+              >
+                ×
+              </button>
+            </div>
+            
+            <div style={{ marginBottom: "20px" }}>
+              {/* Progress Bar */}
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: "var(--muted)", marginBottom: "6px" }}>
+                <span>Sending reports for: <strong>{selectedBatchFilter === "All" ? "All Batches" : `${selectedBatchFilter} Slot`}</strong></span>
+                <span><strong>{currentQueueIndex + 1} of {broadcastQueue.length}</strong> students</span>
+              </div>
+              <div style={{ width: "100%", height: "8px", backgroundColor: "#E2E8F0", borderRadius: "4px", overflow: "hidden", marginBottom: "16px" }}>
+                <div 
+                  style={{ 
+                    width: `${((currentQueueIndex + 1) / broadcastQueue.length) * 100}%`, 
+                    height: "100%", 
+                    backgroundColor: "var(--gold)", 
+                    transition: "width 0.3s ease" 
+                  }} 
+                />
+              </div>
+              
+              {/* Student Report Card */}
+              <div 
+                style={{ 
+                  backgroundColor: "#F8FAFC", 
+                  border: "1px solid var(--line)", 
+                  borderRadius: "var(--border-radius)", 
+                  padding: "16px",
+                  marginBottom: "20px"
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--line)", paddingBottom: "10px", marginBottom: "12px", flexWrap: "wrap", gap: "8px" }}>
+                  <div>
+                    <h3 style={{ fontSize: "18px", fontWeight: 700, color: "var(--primary)", margin: 0 }}>
+                      {getValue(broadcastQueue[currentQueueIndex], ["Student Name"])}
+                    </h3>
+                    <p style={{ fontSize: "12px", color: "var(--muted)", margin: "2px 0 0" }}>
+                      Class {getValue(broadcastQueue[currentQueueIndex], ["Class", "class"]) || "—"} · {getValue(broadcastQueue[currentQueueIndex], ["Batch"])} Slot
+                    </p>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <span 
+                      style={{ 
+                        display: "inline-block",
+                        backgroundColor: "#EFF6FF", 
+                        color: "#1E40AF", 
+                        padding: "4px 8px", 
+                        borderRadius: "12px", 
+                        fontSize: "12px", 
+                        fontWeight: 700 
+                      }}
+                    >
+                      📞 {getValue(broadcastQueue[currentQueueIndex], ["Parent Phone"])}
+                    </span>
+                  </div>
+                </div>
+                
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "12px" }}>
+                  <div>
+                    <span style={{ fontSize: "11px", color: "var(--muted)", textTransform: "uppercase", fontWeight: 600, display: "block" }}>
+                      Attendance
+                    </span>
+                    <strong style={{ fontSize: "14px", color: "var(--charcoal)" }}>
+                      {getValue(broadcastQueue[currentQueueIndex], ["Attendance"]) || "0/0 Days"}
+                    </strong>
+                  </div>
+                  <div>
+                    <span style={{ fontSize: "11px", color: "var(--muted)", textTransform: "uppercase", fontWeight: 600, display: "block" }}>
+                      Math Test Score
+                    </span>
+                    <strong style={{ fontSize: "14px", color: "var(--charcoal)" }}>
+                      {getValue(broadcastQueue[currentQueueIndex], ["Math Test Marks"]) ? `${getValue(broadcastQueue[currentQueueIndex], ["Math Test Marks"])}/20` : "No Score"}
+                    </strong>
+                  </div>
+                </div>
+                
+                <div>
+                  <span style={{ fontSize: "11px", color: "var(--muted)", textTransform: "uppercase", fontWeight: 600, display: "block", marginBottom: "4px" }}>
+                    Remarks & Feedback
+                  </span>
+                  <p style={{ fontSize: "13px", color: "var(--charcoal)", background: "white", padding: "8px 12px", borderRadius: "4px", border: "1px dashed var(--line)", margin: 0, fontStyle: "italic" }}>
+                    "{getValue(broadcastQueue[currentQueueIndex], ["Teacher Remarks", "Teacher Remark"]) || "—"}"
+                  </p>
+                </div>
+              </div>
+              
+              {/* Message Preview */}
+              <div>
+                <span style={{ fontSize: "11px", color: "var(--muted)", textTransform: "uppercase", fontWeight: 600, display: "block", marginBottom: "4px" }}>
+                  WhatsApp Message Preview
+                </span>
+                <div 
+                  style={{ 
+                    maxHeight: "150px", 
+                    overflowY: "auto", 
+                    fontSize: "12px", 
+                    whiteSpace: "pre-wrap", 
+                    backgroundColor: "#EFFFF4", 
+                    border: "1.5px solid #25D366", 
+                    borderRadius: "var(--border-radius)", 
+                    padding: "12px",
+                    color: "#0F5132",
+                    fontFamily: "monospace"
+                  }}
+                >
+                  {decodeURIComponent(getWhatsAppDetails(broadcastQueue[currentQueueIndex]).text)}
+                </div>
+              </div>
+            </div>
+            
+            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+              <button 
+                onClick={handleSendCurrentWizard}
+                className={`${styles.btn} ${styles.btnWhatsapp}`}
+                style={{ flex: 2, padding: "12px", fontSize: "14px", gap: "6px" }}
+                disabled={apiUpdatingStatus}
+              >
+                {apiUpdatingStatus ? "Syncing..." : "🟢 Send WhatsApp & Next"}
+              </button>
+              
+              <button 
+                onClick={handleSkipCurrentWizard}
+                className={`${styles.btn} ${styles.btnOutline}`}
+                style={{ flex: 1, padding: "12px" }}
+                disabled={apiUpdatingStatus}
+              >
+                Skip
+              </button>
+              
+              <button 
+                onClick={() => {
+                  setIsSendingBroadcast(false);
+                  setBroadcastQueue([]);
+                  setCurrentQueueIndex(-1);
+                  fetchStudents();
+                }}
+                className={`${styles.btn} ${styles.btnDanger}`}
+                style={{ flex: 1, padding: "12px" }}
+                disabled={apiUpdatingStatus}
+              >
+                Cancel
               </button>
             </div>
           </div>
