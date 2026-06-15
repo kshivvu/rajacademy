@@ -1,0 +1,464 @@
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px 16px;
+  font-family: var(--font-body), sans-serif;
+  color: var(--ink);
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+  border-bottom: 2px solid var(--line);
+  padding-bottom: 16px;
+}
+
+.headerTitle h1 {
+  font-family: var(--font-display), Georgia, serif;
+  font-size: 28px;
+  color: var(--primary);
+}
+
+.headerTitle p {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.navGroup {
+  display: flex;
+  gap: 12px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: var(--border-radius);
+  border: none;
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.btnPrimary {
+  background-color: var(--primary);
+  color: var(--cream);
+}
+
+.btnPrimary:hover {
+  background-color: var(--deep);
+}
+
+.btnGold {
+  background-color: var(--gold);
+  color: var(--deep);
+  font-weight: 700;
+}
+
+.btnGold:hover {
+  background-color: #d4b455;
+}
+
+.btnOutline {
+  background-color: transparent;
+  border: 1px solid var(--primary);
+  color: var(--primary);
+}
+
+.btnOutline:hover {
+  background-color: rgba(10, 29, 55, 0.05);
+}
+
+.btnWhatsapp {
+  background-color: #25D366;
+  color: white;
+  gap: 6px;
+}
+
+.btnWhatsapp:hover {
+  background-color: #128C7E;
+}
+
+.btnDanger {
+  background-color: #EF4444;
+  color: white;
+}
+
+.btnDanger:hover {
+  background-color: #DC2626;
+}
+
+.alertBox {
+  background-color: #EFF6FF;
+  border-left: 4px solid #3B82F6;
+  padding: 16px;
+  border-radius: var(--border-radius);
+  margin-bottom: 24px;
+  font-size: 14px;
+  color: #1E3A8A;
+}
+
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  margin-bottom: 30px;
+}
+
+.statCard {
+  background: white;
+  border-radius: var(--border-radius);
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.03);
+  border-left: 4px solid var(--gold);
+}
+
+.statCard h3 {
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.statCard .value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.filterBar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.filterGroup {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.filterBtn {
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  background: white;
+  font-size: 12px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: var(--transition-fast);
+}
+
+.filterBtnActive {
+  background-color: var(--primary);
+  color: var(--cream);
+  border-color: var(--primary);
+}
+
+.tableCard {
+  background: white;
+  border-radius: var(--border-radius);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.04);
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+
+.tableHeader {
+  padding: 16px 20px;
+  background-color: #FAFAFA;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.tableHeader h2 {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.tableContainer {
+  overflow-x: auto;
+}
+
+.tableContainer table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.tableContainer th, .tableContainer td {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+
+.tableContainer th {
+  background-color: #F8FAFC;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.tableContainer tr:hover {
+  background-color: #F8FAFC;
+}
+
+/* Badges */
+.badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.badgeSuccess {
+  background-color: #DCFCE7;
+  color: #166534;
+}
+
+.badgeInfo {
+  background-color: #DBEAFE;
+  color: #1E40AF;
+}
+
+.badgeWarning {
+  background-color: #FEF3C7;
+  color: #92400E;
+}
+
+.statusIndicator {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.statusPending {
+  background-color: #F1F5F9;
+  color: #475569;
+}
+
+.statusSent {
+  background-color: #D1FAE5;
+  color: #065F46;
+}
+
+.statusFailed {
+  background-color: #FEE2E2;
+  color: #991B1B;
+}
+
+/* PIN Screen & Modals */
+.pinContainer {
+  max-width: 400px;
+  margin: 80px auto;
+  background: white;
+  padding: 30px;
+  border-radius: var(--border-radius);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+  text-align: center;
+  border-top: 4px solid var(--gold);
+}
+
+.pinContainer h2 {
+  font-size: 20px;
+  margin-bottom: 12px;
+}
+
+.pinInput {
+  width: 120px;
+  font-size: 24px;
+  padding: 8px;
+  text-align: center;
+  border-radius: var(--border-radius);
+  border: 1.5px solid var(--line);
+  margin: 16px 0;
+  letter-spacing: 8px;
+}
+
+.pinInput:focus {
+  border-color: var(--gold);
+  outline: none;
+}
+
+/* Teacher View Grid */
+.teacherGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-top: 20px;
+}
+
+@media (max-width: 768px) {
+  .teacherGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.formCard {
+  background: white;
+  padding: 24px;
+  border-radius: var(--border-radius);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.03);
+  border: 1px solid var(--line);
+}
+
+.formCard h2 {
+  font-size: 18px;
+  margin-bottom: 16px;
+  color: var(--primary);
+  border-bottom: 1.5px solid var(--line);
+  padding-bottom: 8px;
+}
+
+.formGroup {
+  margin-bottom: 16px;
+}
+
+.formGroup label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--charcoal);
+}
+
+.formControl {
+  width: 100%;
+  padding: 10px;
+  border-radius: var(--border-radius);
+  border: 1.5px solid var(--line);
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.formControl:focus {
+  border-color: var(--primary);
+  outline: none;
+}
+
+/* Attendance Checklist */
+.attendanceList {
+  max-height: 350px;
+  overflow-y: auto;
+  border: 1.5px solid var(--line);
+  border-radius: var(--border-radius);
+  padding: 8px;
+  margin-bottom: 16px;
+}
+
+.attendanceItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid #F1F5F9;
+}
+
+.attendanceItem:last-child {
+  border-bottom: none;
+}
+
+.attendanceItem strong {
+  font-size: 14px;
+}
+
+.attendanceToggle {
+  display: flex;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  overflow: hidden;
+}
+
+.attendanceToggle button {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  border: none;
+  background: #F1F5F9;
+  cursor: pointer;
+  color: var(--muted);
+  transition: var(--transition-fast);
+}
+
+.attendanceToggle button.presentActive {
+  background-color: #D1FAE5;
+  color: #065F46;
+}
+
+.attendanceToggle button.absentActive {
+  background-color: #FEE2E2;
+  color: #991B1B;
+}
+
+/* Settings Modal overlay */
+.modalOverlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: rgba(0,0,0,0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  animation: fade-in 0.25s ease-out;
+}
+
+.modalContent {
+  background: white;
+  width: 90%;
+  max-width: 500px;
+  border-radius: var(--border-radius);
+  padding: 24px;
+  box-shadow: 0 4px 25px rgba(0,0,0,0.15);
+  animation: slide-up 0.25s ease-out;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-up {
+  from { transform: translateY(15px); }
+  to { transform: none; }
+}
+
+.modalHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  border-bottom: 1.5px solid var(--line);
+  padding-bottom: 8px;
+}
+
+.modalHeader h2 {
+  font-size: 18px;
+  color: var(--primary);
+}
+
+.modalClose {
+  background: transparent;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  color: var(--muted);
+}
