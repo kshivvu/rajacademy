@@ -1,18 +1,19 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import styles from "./page.module.css";
 
 interface Student {
-  "Student Name": string;
-  "Parent Phone": string;
-  "Week Date": string;
-  "Attendance": string;
-  "Math Test Marks": string;
-  "Max Marks": string;
-  "Teacher Remarks": string;
-  "Status": string;
-  "Batch": string;
+  "Student Name"?: string;
+  "Parent Phone"?: string;
+  "Week Date"?: string;
+  "Attendance"?: string;
+  "Math Test Marks"?: string;
+  "Max Marks"?: string;
+  "Teacher Remarks"?: string;
+  "Teacher Remark"?: string;
+  "Status"?: string;
+  "Batch"?: string;
 }
 
 export default function Dashboard() {
@@ -45,6 +46,30 @@ export default function Dashboard() {
 
   // Attendance Checklist state: { [studentName]: boolean }
   const [attendanceChecklist, setAttendanceChecklist] = useState<Record<string, boolean>>({});
+
+  // Robust helper to get case-insensitive and spelling-flexible values from the Google Sheets JSON
+  const getValue = (student: Student, keys: string[]): string => {
+    if (!student) return "";
+    for (const key of keys) {
+      const val = student[key as keyof Student];
+      if (val !== undefined && val !== null) {
+        return String(val).trim();
+      }
+    }
+    return "";
+  };
+
+  // Normalizes batch value to match dashboard filter tags ("3pm", "4pm", etc.)
+  const getNormalizedBatch = (batchStr: string): string => {
+    if (!batchStr) return "";
+    const cleaned = batchStr.trim().toLowerCase();
+    if (cleaned.startsWith("15:00") || cleaned.startsWith("15.00") || cleaned.startsWith("3:") || cleaned === "3pm" || cleaned.includes("3")) return "3pm";
+    if (cleaned.startsWith("16:00") || cleaned.startsWith("16.00") || cleaned.startsWith("4:") || cleaned === "4pm" || cleaned.includes("4")) return "4pm";
+    if (cleaned.startsWith("17:00") || cleaned.startsWith("17.00") || cleaned.startsWith("5:") || cleaned === "5pm" || cleaned.includes("5")) return "5pm";
+    if (cleaned.startsWith("18:00") || cleaned.startsWith("18.00") || cleaned.startsWith("6:") || cleaned === "6pm" || cleaned.includes("6")) return "6pm";
+    if (cleaned.startsWith("19:00") || cleaned.startsWith("19.00") || cleaned.startsWith("7:") || cleaned === "7pm" || cleaned.includes("7")) return "7pm";
+    return batchStr;
+  };
 
   // 1. Initial configuration loading
   useEffect(() => {
@@ -79,7 +104,10 @@ export default function Dashboard() {
         // Initialize attendance checklist with all present (true)
         const initialAttendance: Record<string, boolean> = {};
         resData.data.forEach((st: Student) => {
-          initialAttendance[st["Student Name"]] = true;
+          const name = getValue(st, ["Student Name"]);
+          if (name) {
+            initialAttendance[name] = true;
+          }
         });
         setAttendanceChecklist(initialAttendance);
       } else {
@@ -121,13 +149,13 @@ export default function Dashboard() {
 
   // 5. Helper function to format WhatsApp templates
   const getWhatsAppDetails = (student: Student) => {
-    const name = student["Student Name"];
-    const phone = student["Parent Phone"];
-    const date = student["Week Date"] || inputDate;
-    const attendance = student["Attendance"];
-    const marks = student["Math Test Marks"];
-    const maxMarks = student["Max Marks"] || "20";
-    const remarks = student["Teacher Remarks"];
+    const name = getValue(student, ["Student Name"]);
+    const phone = getValue(student, ["Parent Phone"]);
+    const date = getValue(student, ["Week Date"]) || inputDate;
+    const attendance = getValue(student, ["Attendance"]);
+    const marks = getValue(student, ["Math Test Marks"]);
+    const maxMarks = getValue(student, ["Max Marks"]) || "20";
+    const remarks = getValue(student, ["Teacher Remarks", "Teacher Remark"]);
     
     // Parse percentage
     let pct = 0;
@@ -177,12 +205,13 @@ export default function Dashboard() {
 
   // 6. Action: Send Single Report
   const triggerSingleSend = async (student: Student) => {
+    const name = getValue(student, ["Student Name"]);
     const { url } = getWhatsAppDetails(student);
     window.open(url, "_blank");
     
     // Optimistic status update local
     setStudents(prev => 
-      prev.map(st => st["Student Name"] === student["Student Name"] ? { ...st, Status: "Sent" } : st)
+      prev.map(st => getValue(st, ["Student Name"]) === name ? { ...st, Status: "Sent" } : st)
     );
 
     // Call API to write to Google Sheets
@@ -192,7 +221,7 @@ export default function Dashboard() {
           method: "POST",
           body: JSON.stringify({
             action: "updateStatus",
-            updates: [{ name: student["Student Name"], status: "Sent" }]
+            updates: [{ name: name, status: "Sent" }]
           })
         });
       } catch (e) {
@@ -204,8 +233,10 @@ export default function Dashboard() {
   // 7. Action: Send All Pending sequentially
   const handleSendAllPending = async () => {
     const pendingStudents = students.filter(st => {
-      const batchMatch = selectedBatchFilter === "All" || st.Batch === selectedBatchFilter;
-      return batchMatch && st.Status.toLowerCase() !== "sent";
+      const studentBatch = getNormalizedBatch(getValue(st, ["Batch"]));
+      const batchMatch = selectedBatchFilter === "All" || studentBatch === selectedBatchFilter;
+      const status = getValue(st, ["Status"]);
+      return batchMatch && status.toLowerCase() !== "sent";
     });
 
     if (pendingStudents.length === 0) {
@@ -238,7 +269,7 @@ export default function Dashboard() {
     if (scriptUrl) {
       try {
         setStatusMsg("Updating statuses in Google Sheets...");
-        const updates = pendingStudents.map(st => ({ name: st["Student Name"], status: "Sent" }));
+        const updates = pendingStudents.map(st => ({ name: getValue(st, ["Student Name"]), status: "Sent" }));
         const response = await fetch(scriptUrl, {
           method: "POST",
           body: JSON.stringify({
@@ -261,7 +292,8 @@ export default function Dashboard() {
       // Local fallback only
       setStudents(prev =>
         prev.map(st => {
-          const isPending = pendingStudents.some(p => p["Student Name"] === st["Student Name"]);
+          const name = getValue(st, ["Student Name"]);
+          const isPending = pendingStudents.some(p => getValue(p, ["Student Name"]) === name);
           return isPending ? { ...st, Status: "Sent" } : st;
         })
       );
@@ -309,7 +341,7 @@ export default function Dashboard() {
       } else {
         // Local fallback
         setStudents(prev => 
-          prev.map(st => st["Student Name"] === teacherSelectedName ? {
+          prev.map(st => getValue(st, ["Student Name"]) === teacherSelectedName ? {
             ...st,
             "Math Test Marks": teacherScore,
             "Teacher Remarks": teacherRemarks,
@@ -333,9 +365,9 @@ export default function Dashboard() {
     
     // Filter students to the currently selected filter batch (or slot time)
     const batchStudents = students.filter(st => {
-      // Must belong to a specific batch (not 'All')
-      const targetBatch = selectedBatchFilter === "All" ? st.Batch : selectedBatchFilter;
-      return st.Batch === targetBatch;
+      const studentBatch = getNormalizedBatch(getValue(st, ["Batch"]));
+      const targetBatch = selectedBatchFilter === "All" ? studentBatch : selectedBatchFilter;
+      return studentBatch === targetBatch;
     });
 
     if (batchStudents.length === 0) {
@@ -347,10 +379,10 @@ export default function Dashboard() {
     setStatusMsg("Saving attendance updates...");
 
     const updates = batchStudents.map(student => {
-      const name = student["Student Name"];
+      const name = getValue(student, ["Student Name"]);
       const isPresent = attendanceChecklist[name] !== false; // Default true
       
-      const attendanceStr = student["Attendance"] || "0/0 Days";
+      const attendanceStr = getValue(student, ["Attendance"]) || "0/0 Days";
       let attended = 0;
       let total = 0;
 
@@ -360,6 +392,12 @@ export default function Dashboard() {
           attended = parseInt(parts[0]) || 0;
           total = parseInt(parts[1]) || 0;
         } catch (e) {}
+      } else if (attendanceStr !== "") {
+        // Fallback if it is a raw number (e.g. '5')
+        try {
+          attended = parseInt(attendanceStr) || 0;
+          total = attended; // Assume current total equals current attended, then increment
+        } catch(e) {}
       }
 
       if (isPresent) {
@@ -393,7 +431,8 @@ export default function Dashboard() {
         // Local fallback
         setStudents(prev =>
           prev.map(st => {
-            const match = updates.find(u => u.name === st["Student Name"]);
+            const name = getValue(st, ["Student Name"]);
+            const match = updates.find(u => u.name === name);
             return match ? { ...st, Attendance: match.attendance } : st;
           })
         );
@@ -410,7 +449,8 @@ export default function Dashboard() {
   // 10. Filtered list mapping
   const filteredStudents = students.filter(st => {
     if (selectedBatchFilter === "All") return true;
-    return st.Batch === selectedBatchFilter;
+    const studentBatch = getNormalizedBatch(getValue(st, ["Batch"]));
+    return studentBatch === selectedBatchFilter;
   });
 
   // Calculate statistics
@@ -426,15 +466,15 @@ export default function Dashboard() {
 
     filteredStudents.forEach(st => {
       try {
-        const marks = parseFloat(st["Math Test Marks"]);
-        const max = parseFloat(st["Max Marks"]) || 20;
+        const marks = parseFloat(getValue(st, ["Math Test Marks"]));
+        const max = parseFloat(getValue(st, ["Max Marks"])) || 20;
         if (!isNaN(marks) && !isNaN(max)) {
           scoreSum += marks;
           possibleScoreSum += max;
         }
       } catch(e){}
 
-      const attStr = st["Attendance"];
+      const attStr = getValue(st, ["Attendance"]);
       if (attStr && attStr.includes("/")) {
         try {
           const parts = attStr.split(" ")[0].split("/");
@@ -444,6 +484,13 @@ export default function Dashboard() {
             attendedSum += att;
             possibleAttendedSum += tot;
           }
+        } catch(e){}
+      } else if (attStr && !isNaN(parseFloat(attStr))) {
+        // Fallback for raw numbers
+        try {
+          const val = parseFloat(attStr);
+          attendedSum += val;
+          possibleAttendedSum += val; // Assume out of same
         } catch(e){}
       }
     });
@@ -529,20 +576,24 @@ export default function Dashboard() {
                   className={styles.formControl}
                   value={teacherSelectedName}
                   onChange={e => {
-                    const st = students.find(s => s["Student Name"] === e.target.value);
+                    const st = students.find(s => getValue(s, ["Student Name"]) === e.target.value);
                     setTeacherSelectedName(e.target.value);
                     if (st) {
-                      setTeacherScore(st["Math Test Marks"] || "15");
-                      setTeacherRemarks(st["Teacher Remarks"] || "");
+                      setTeacherScore(getValue(st, ["Math Test Marks"]) || "15");
+                      setTeacherRemarks(getValue(st, ["Teacher Remarks", "Teacher Remark"]) || "");
                     }
                   }}
                 >
                   <option value="">-- Choose Student --</option>
-                  {filteredStudents.map(s => (
-                    <option key={s["Student Name"]} value={s["Student Name"]}>
-                      {s["Student Name"]} ({s.Batch})
-                    </option>
-                  ))}
+                  {filteredStudents.map(s => {
+                    const name = getValue(s, ["Student Name"]);
+                    const batch = getValue(s, ["Batch"]);
+                    return (
+                      <option key={name} value={name}>
+                        {name} ({getNormalizedBatch(batch)})
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
 
@@ -608,7 +659,7 @@ export default function Dashboard() {
                     <p style={{ padding: "15px", textAlign: "center", color: "var(--muted)" }}>No students in this batch.</p>
                   ) : (
                     filteredStudents.map(student => {
-                      const name = student["Student Name"];
+                      const name = getValue(student, ["Student Name"]);
                       const isPresent = attendanceChecklist[name] !== false; // default true
                       
                       return (
@@ -727,13 +778,13 @@ export default function Dashboard() {
                   </thead>
                   <tbody>
                     {filteredStudents.map(student => {
-                      const name = student["Student Name"];
-                      const phone = student["Parent Phone"];
-                      const att = student["Attendance"];
-                      const marks = student["Math Test Marks"];
-                      const remarks = student["Teacher Remarks"];
-                      const status = student["Status"];
-                      const batch = student["Batch"];
+                      const name = getValue(student, ["Student Name"]);
+                      const phone = getValue(student, ["Parent Phone"]);
+                      const att = getValue(student, ["Attendance"]);
+                      const marks = getValue(student, ["Math Test Marks"]);
+                      const remarks = getValue(student, ["Teacher Remarks", "Teacher Remark"]);
+                      const status = getValue(student, ["Status"]);
+                      const batch = getValue(student, ["Batch"]);
 
                       // Grade badge computation
                       let pct = 0;
@@ -753,19 +804,19 @@ export default function Dashboard() {
                       return (
                         <tr key={name}>
                           <td><strong>{name}</strong></td>
-                          <td><span className={styles.badge} style={{ backgroundColor: "#F1F5F9", color: "var(--charcoal)" }}>{batch}</span></td>
-                          <td>{att}</td>
+                          <td><span className={styles.badge} style={{ backgroundColor: "#F1F5F9", color: "var(--charcoal)" }}>{getNormalizedBatch(batch)} Slot</span></td>
+                          <td>{att || "0/0 Days"}</td>
                           <td>
                             <span className={`${styles.badge} ${badgeClass}`}>
-                              {marks}/20 ({pct}%)
+                              {marks ? `${marks}/20 (${pct}%)` : "No Score"}
                             </span>
                           </td>
                           <td style={{ maxWidth: "250px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            "{remarks}"
+                            {remarks ? `"${remarks}"` : "—"}
                           </td>
                           <td>
                             <span className={`${styles.statusIndicator} ${statusClass}`}>
-                              {status}
+                              {status || "Pending"}
                             </span>
                           </td>
                           <td>
