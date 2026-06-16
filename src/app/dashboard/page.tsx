@@ -729,17 +729,17 @@ export default function Dashboard() {
                                       backgroundColor: "#F8FAFC",
                                       cursor: "pointer"
                                     }}
+                                    value=""
                                     onChange={e => {
                                       if (e.target.value) {
                                         setBatchGrades(prev => ({
                                           ...prev,
                                           [name]: { ...currentData, remarks: e.target.value }
                                         }));
-                                        e.target.value = ""; // Reset select element
                                       }
                                     }}
                                   >
-                                    <option value="">⚡ Presets</option>
+                                    <option value="" disabled>⚡ Presets</option>
                                     {REMARK_PRESETS.map(preset => (
                                       <option key={preset} value={preset}>{preset}</option>
                                     ))}
