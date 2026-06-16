@@ -26,6 +26,14 @@ const REMARK_PRESETS = [
   "Absent for weekly test."
 ];
 
+const getWeekSaturday = (date: Date = new Date()): string => {
+  const resultDate = new Date(date);
+  const day = resultDate.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  const diff = day === 0 ? -1 : 6 - day;
+  resultDate.setDate(resultDate.getDate() + diff);
+  return resultDate.toISOString().split("T")[0];
+};
+
 export default function Dashboard() {
   // Navigation & Config
   const [currentView, setCurrentView] = useState<"dashboard" | "teacher-input" | "settings">("dashboard");
@@ -94,8 +102,8 @@ export default function Dashboard() {
       setScriptUrl(savedUrl);
       setTeacherPin(savedPin);
       
-      const today = new Date().toISOString().split("T")[0];
-      setInputDate(today);
+      const saturday = getWeekSaturday(new Date());
+      setInputDate(saturday);
       
       if (savedUrl) {
         fetchStudents(savedUrl);
