@@ -71,9 +71,16 @@ export default function Dashboard() {
   const [apiUpdatingStatus, setApiUpdatingStatus] = useState(false);
 
   // Daily Attendance Manager States
-  const [teacherSubView, setTeacherSubView] = useState<"attendance" | "grades">("attendance");
+  const [teacherSubView, setTeacherSubView] = useState<"attendance" | "grades" | "add-student">("attendance");
   const [attendanceDate, setAttendanceDate] = useState("");
   const [attendanceSubmitting, setAttendanceSubmitting] = useState(false);
+
+  // Add Student Form States
+  const [newStudentName, setNewStudentName] = useState("");
+  const [newStudentPhone, setNewStudentPhone] = useState("");
+  const [newStudentClass, setNewStudentClass] = useState("");
+  const [newStudentBatch, setNewStudentBatch] = useState("3pm");
+  const [studentAdding, setStudentAdding] = useState(false);
 
   // Robust helper to get case-insensitive and spelling-flexible values from the Google Sheets JSON
   const getValue = (student: Student, keys: string[]): string => {
@@ -348,6 +355,71 @@ export default function Dashboard() {
   };
 
   // 8. Submit Unified Batch Attendance & Grades in 1 single API Call!
+  // Action: Submit New Student Enrollment
+  const handleAddStudentSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!newStudentName.trim()) {
+      alert("Please enter a student name.");
+      return;
+    }
+    if (!newStudentPhone.trim()) {
+      alert("Please enter a parent phone number.");
+      return;
+    }
+    
+    // Standard 10-digit check & prepend country code '91' for WhatsApp compatibility
+    let cleanPhone = newStudentPhone.replace(/\D/g, "");
+    if (cleanPhone.length === 10) {
+      cleanPhone = "91" + cleanPhone;
+    } else if (cleanPhone.length < 10) {
+      alert("Please enter a valid 10-digit phone number.");
+      return;
+    }
+
+    setStudentAdding(true);
+    setStatusMsg(`Adding student ${newStudentName}...`);
+
+    try {
+      if (scriptUrl) {
+        const response = await fetch(scriptUrl, {
+          method: "POST",
+          body: JSON.stringify({
+            action: "addStudent",
+            student: {
+              name: newStudentName.trim(),
+              phone: cleanPhone,
+              studentClass: newStudentClass.trim(),
+              batch: newStudentBatch,
+              maxMarks: 20,
+              status: "Pending",
+              date: inputDate // Use current Saturday date
+            }
+          })
+        });
+        const resData = await response.json();
+        if (resData.status === "success") {
+          setStatusMsg(`Successfully enrolled ${newStudentName}!`);
+          // Clear inputs
+          setNewStudentName("");
+          setNewStudentPhone("");
+          setNewStudentClass("");
+          // Refresh list
+          fetchStudents();
+        } else {
+          setErrorMsg(resData.message || "Failed to add student to Google Sheet.");
+        }
+      } else {
+        setErrorMsg("Google Apps Script URL is not configured.");
+      }
+    } catch (err) {
+      setErrorMsg("Network error adding student.");
+    } finally {
+      setStudentAdding(false);
+      setTimeout(() => setStatusMsg(""), 5000);
+    }
+  };
+
   // Action: Submit Daily Attendance logs
   const handleAttendanceSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -686,9 +758,17 @@ export default function Dashboard() {
                 >
                   📝 Saturday Grades
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setTeacherSubView("add-student")}
+                  className={`${styles.filterBtn} ${teacherSubView === "add-student" ? styles.filterBtnActive : ""}`}
+                  style={{ borderRadius: "8px", fontSize: "13px", padding: "8px 16px" }}
+                >
+                  ➕ Add Student
+                </button>
               </div>
 
-              {teacherSubView === "attendance" ? (
+              {teacherSubView === "attendance" && (
                 // VIEW: DAILY ATTENDANCE MANAGER
                 <div>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1.5px solid var(--line)", paddingBottom: "12px", marginBottom: "20px", flexWrap: "wrap", gap: "12px" }}>
@@ -795,7 +875,9 @@ export default function Dashboard() {
                     </div>
                   </form>
                 </div>
-              ) : (
+              )}
+
+              {teacherSubView === "grades" && (
                 // VIEW: SATURDAY GRADE LOGGER
                 <div>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1.5px solid var(--line)", paddingBottom: "12px", marginBottom: "20px", flexWrap: "wrap", gap: "12px" }}>
@@ -935,6 +1017,98 @@ export default function Dashboard() {
                         style={{ minWidth: "200px" }}
                       >
                         {teacherSubmitting ? "Saving Logs..." : `💾 Save Session Data (${selectedBatchFilter})`}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              {teacherSubView === "add-student" && (
+                // VIEW: ADD NEW STUDENT FORM
+                <div>
+                  <div style={{ borderBottom: "1.5px solid var(--line)", paddingBottom: "12px", marginBottom: "20px" }}>
+                    <h2 style={{ borderBottom: "none", paddingBottom: 0, marginBottom: "2px" }}>
+                      ➕ Add New Student Enrollment
+                    </h2>
+                    <p style={{ fontSize: "13px", color: "var(--muted)" }}>
+                      Fill in the student details to add them to your Google Sheet database.
+                    </p>
+                  </div>
+
+                  <form onSubmit={handleAddStudentSubmit} style={{ maxWidth: "600px" }}>
+                    <div className={styles.formGroup} style={{ marginBottom: "16px" }}>
+                      <label style={{ display: "block", fontSize: "13px", fontWeight: 700, marginBottom: "6px", color: "var(--charcoal)" }}>Student Name</label>
+                      <input 
+                        type="text" 
+                        className={styles.formControl} 
+                        value={newStudentName}
+                        onChange={e => setNewStudentName(e.target.value)}
+                        placeholder="Enter full name (e.g. Rahul Kumar)"
+                        required
+                      />
+                    </div>
+
+                    <div className={styles.formGroup} style={{ marginBottom: "16px" }}>
+                      <label style={{ display: "block", fontSize: "13px", fontWeight: 700, marginBottom: "6px", color: "var(--charcoal)" }}>Parent Phone Number (10 Digits)</label>
+                      <input 
+                        type="tel" 
+                        className={styles.formControl} 
+                        value={newStudentPhone}
+                        onChange={e => setNewStudentPhone(e.target.value)}
+                        placeholder="e.g. 9876543210"
+                        required
+                      />
+                      <p style={{ fontSize: "11px", color: "var(--muted)", marginTop: "4px", margin: "4px 0 0" }}>
+                        Enter the 10-digit mobile number. Country code `91` will be added automatically for WhatsApp reports.
+                      </p>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "20px" }}>
+                      <div className={styles.formGroup}>
+                        <label style={{ display: "block", fontSize: "13px", fontWeight: 700, marginBottom: "6px", color: "var(--charcoal)" }}>Class Level</label>
+                        <select 
+                          className={styles.formControl} 
+                          value={newStudentClass}
+                          onChange={e => setNewStudentClass(e.target.value)}
+                          required
+                        >
+                          <option value="">Select Class</option>
+                          {["4", "5", "6", "7", "8", "9", "10", "11", "12"].map(cls => (
+                            <option key={cls} value={cls}>Class {cls}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className={styles.formGroup}>
+                        <label style={{ display: "block", fontSize: "13px", fontWeight: 700, marginBottom: "6px", color: "var(--charcoal)" }}>Batch Assignment</label>
+                        <select 
+                          className={styles.formControl} 
+                          value={newStudentBatch}
+                          onChange={e => setNewStudentBatch(e.target.value)}
+                          required
+                        >
+                          {["3pm", "4pm", "5pm", "6pm", "7pm"].map(slot => (
+                            <option key={slot} value={slot}>{slot} Slot</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", gap: "12px", marginTop: "24px" }}>
+                      <button 
+                        type="button" 
+                        onClick={() => setTeacherSubView("attendance")} 
+                        className={`${styles.btn} ${styles.btnOutline}`}
+                      >
+                        Cancel
+                      </button>
+                      <button 
+                        type="submit" 
+                        disabled={studentAdding}
+                        className={`${styles.btn} ${styles.btnPrimary}`}
+                        style={{ minWidth: "180px" }}
+                      >
+                        {studentAdding ? "Enrolling..." : "➕ Enroll Student"}
                       </button>
                     </div>
                   </form>
