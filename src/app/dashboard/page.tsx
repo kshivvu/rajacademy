@@ -70,6 +70,11 @@ export default function Dashboard() {
   const [isSendingBroadcast, setIsSendingBroadcast] = useState(false);
   const [apiUpdatingStatus, setApiUpdatingStatus] = useState(false);
 
+  // Daily Attendance Manager States
+  const [teacherSubView, setTeacherSubView] = useState<"attendance" | "grades">("attendance");
+  const [attendanceDate, setAttendanceDate] = useState("");
+  const [attendanceSubmitting, setAttendanceSubmitting] = useState(false);
+
   // Robust helper to get case-insensitive and spelling-flexible values from the Google Sheets JSON
   const getValue = (student: Student, keys: string[]): string => {
     if (!student) return "";
@@ -104,6 +109,9 @@ export default function Dashboard() {
       
       const saturday = getWeekSaturday(new Date());
       setInputDate(saturday);
+      
+      const todayStr = new Date().toISOString().split("T")[0];
+      setAttendanceDate(todayStr);
       
       if (savedUrl) {
         fetchStudents(savedUrl);
@@ -340,6 +348,82 @@ export default function Dashboard() {
   };
 
   // 8. Submit Unified Batch Attendance & Grades in 1 single API Call!
+  // Action: Submit Daily Attendance logs
+  const handleAttendanceSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    const batchStudents = students.filter(st => {
+      const studentBatch = getNormalizedBatch(getValue(st, ["Batch"]));
+      return studentBatch === selectedBatchFilter;
+    });
+
+    if (batchStudents.length === 0) {
+      alert("No students in this batch to log attendance.");
+      return;
+    }
+
+    setAttendanceSubmitting(true);
+    setStatusMsg("Saving daily attendance log to Google Sheet...");
+
+    const updates = batchStudents.map(student => {
+      const name = getValue(student, ["Student Name"]);
+      const isPresent = attendanceChecklist[name] !== false; // Default true
+      return {
+        name,
+        status: isPresent ? "Present" : "Absent",
+        batch: selectedBatchFilter
+      };
+    });
+
+    try {
+      if (scriptUrl) {
+        const response = await fetch(scriptUrl, {
+          method: "POST",
+          body: JSON.stringify({
+            action: "submitAttendance",
+            date: attendanceDate,
+            updates
+          })
+        });
+        const resData = await response.json();
+        if (resData.status === "success") {
+          setStatusMsg(`Attendance successfully logged for ${batchStudents.length} students!`);
+          fetchStudents();
+        } else {
+          setErrorMsg(resData.message || "Failed to save daily attendance in Google Sheets.");
+        }
+      } else {
+        // Local fallback
+        setStudents(prev =>
+          prev.map(st => {
+            const name = getValue(st, ["Student Name"]);
+            const match = updates.find(u => u.name === name);
+            if (match) {
+              const prevAtt = getValue(st, ["Attendance"]) || "0/0 Days";
+              let att = 0, tot = 0;
+              if (prevAtt.includes("/")) {
+                const parts = prevAtt.split(" ")[0].split("/");
+                att = parseInt(parts[0]) || 0;
+                tot = parseInt(parts[1]) || 0;
+              }
+              if (match.status === "Present") att += 1;
+              tot += 1;
+              return { ...st, Attendance: `${att}/${tot} Days` };
+            }
+            return st;
+          })
+        );
+        setStatusMsg("Attendance logged locally (No API URL configured).");
+      }
+    } catch (err) {
+      setErrorMsg("Network error saving daily attendance.");
+    } finally {
+      setAttendanceSubmitting(false);
+      setTimeout(() => setStatusMsg(""), 5000);
+    }
+  };
+
+  // 8. Submit Unified Batch Saturday Grades in 1 single API Call!
   const handleBatchSessionSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -356,45 +440,18 @@ export default function Dashboard() {
     }
 
     setTeacherSubmitting(true);
-    setStatusMsg("Saving weekly grades and attendance checklist...");
+    setStatusMsg("Saving weekly grades and remarks...");
 
     const updates = batchStudents.map(student => {
       const name = getValue(student, ["Student Name"]);
-      const isPresent = attendanceChecklist[name] !== false; // Default true
-      
-      // Compute updated attendance string
-      const attendanceStr = getValue(student, ["Attendance"]) || "0/0 Days";
-      let attended = 0;
-      let total = 0;
-
-      if (attendanceStr.includes("/")) {
-        try {
-          const parts = attendanceStr.split(" ")[0].split("/");
-          attended = parseInt(parts[0]) || 0;
-          total = parseInt(parts[1]) || 0;
-        } catch (e) {}
-      } else if (attendanceStr !== "") {
-        try {
-          attended = parseInt(attendanceStr) || 0;
-          total = attended;
-        } catch(e) {}
-      }
-
-      if (isPresent) {
-        attended += 1;
-      }
-      total += 1;
-
-      // Get grade values from the form inputs
       const studentGrade = batchGrades[name] || { marks: "", remarks: "" };
 
       return {
         name,
-        attendance: `${attended}/${total} Days`,
         marks: studentGrade.marks,
         remarks: studentGrade.remarks,
         date: inputDate,
-        status: "Pending" // Reset to pending for the new report
+        status: "Pending" // Reset status to Pending for new report
       };
     });
 
@@ -422,7 +479,6 @@ export default function Dashboard() {
             const match = updates.find(u => u.name === name);
             return match ? {
               ...st,
-              Attendance: match.attendance,
               "Math Test Marks": match.marks,
               "Teacher Remarks": match.remarks,
               "Week Date": match.date,
@@ -603,175 +659,287 @@ export default function Dashboard() {
             </div>
           ) : (
             <div className={styles.formCard} style={{ maxWidth: "100%", overflow: "hidden" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1.5px solid var(--line)", paddingBottom: "12px", marginBottom: "20px", flexWrap: "wrap", gap: "12px" }}>
-                <div>
-                  <h2 style={{ borderBottom: "none", paddingBottom: 0, marginBottom: "2px" }}>
-                    Batch Session Logger — <span>{selectedBatchFilter} Slot</span>
-                  </h2>
-                  <p style={{ fontSize: "13px", color: "var(--muted)" }}>
-                    Enter attendance and test scores for all students in this slot simultaneously.
-                  </p>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <label style={{ fontSize: "13px", fontWeight: 700, color: "var(--charcoal)" }}>Session Date:</label>
-                  <input 
-                    type="date" 
-                    className={styles.formControl} 
-                    style={{ width: "160px", padding: "6px 10px" }}
-                    value={inputDate}
-                    onChange={e => setInputDate(e.target.value)}
-                  />
-                </div>
+              {/* Tab Selector */}
+              <div 
+                style={{ 
+                  display: "flex", 
+                  gap: "10px", 
+                  marginBottom: "20px", 
+                  borderBottom: "2px solid var(--line)", 
+                  paddingBottom: "10px",
+                  flexWrap: "wrap"
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setTeacherSubView("attendance")}
+                  className={`${styles.filterBtn} ${teacherSubView === "attendance" ? styles.filterBtnActive : ""}`}
+                  style={{ borderRadius: "8px", fontSize: "13px", padding: "8px 16px" }}
+                >
+                  📅 Daily Attendance
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTeacherSubView("grades")}
+                  className={`${styles.filterBtn} ${teacherSubView === "grades" ? styles.filterBtnActive : ""}`}
+                  style={{ borderRadius: "8px", fontSize: "13px", padding: "8px 16px" }}
+                >
+                  📝 Saturday Grades
+                </button>
               </div>
 
-              <form onSubmit={handleBatchSessionSubmit}>
-                <div className={styles.tableContainer} style={{ marginBottom: "24px" }}>
-                  {filteredStudents.length === 0 ? (
-                    <div style={{ padding: "40px", textAlign: "center", color: "var(--muted)" }}>
-                      No students are currently assigned to the **{selectedBatchFilter}** slot in your Google Sheet.
+              {teacherSubView === "attendance" ? (
+                // VIEW: DAILY ATTENDANCE MANAGER
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1.5px solid var(--line)", paddingBottom: "12px", marginBottom: "20px", flexWrap: "wrap", gap: "12px" }}>
+                    <div>
+                      <h2 style={{ borderBottom: "none", paddingBottom: 0, marginBottom: "2px" }}>
+                        📅 Daily Attendance Manager — <span>{selectedBatchFilter} Slot</span>
+                      </h2>
+                      <p style={{ fontSize: "13px", color: "var(--muted)" }}>
+                        Mark Present or Absent for today's class.
+                      </p>
                     </div>
-                  ) : (
-                    <table style={{ minWidth: "750px" }}>
-                      <thead>
-                        <tr>
-                          <th style={{ width: "20%" }}>Student Name</th>
-                          <th style={{ width: "10%" }}>Class</th>
-                          <th style={{ width: "20%", textAlign: "center" }}>Daily Attendance</th>
-                          <th style={{ width: "15%" }}>Score (out of 20)</th>
-                          <th style={{ width: "35%" }}>Weekly Teacher Remarks</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredStudents.map(student => {
-                          const name = getValue(student, ["Student Name"]);
-                          const studentClass = getValue(student, ["Class", "class"]);
-                          const isPresent = attendanceChecklist[name] !== false;
-                          const currentData = batchGrades[name] || { marks: "", remarks: "" };
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <label style={{ fontSize: "13px", fontWeight: 700, color: "var(--charcoal)" }}>Class Date:</label>
+                      <input 
+                        type="date" 
+                        className={styles.formControl} 
+                        style={{ width: "160px", padding: "6px 10px" }}
+                        value={attendanceDate}
+                        onChange={e => setAttendanceDate(e.target.value)}
+                      />
+                    </div>
+                  </div>
 
-                          return (
-                            <tr key={name}>
-                              <td><strong>{name}</strong></td>
-                              <td>
-                                <span className={styles.badge} style={{ backgroundColor: "#E0F2FE", color: "#0369A1", fontWeight: 700 }}>
-                                  Class {studentClass || "—"}
-                                </span>
-                              </td>
-                              <td style={{ textAlign: "center" }}>
-                                <div className={styles.attendanceToggle} style={{ display: "inline-flex" }}>
-                                  <button
-                                    type="button"
-                                    className={isPresent ? styles.presentActive : ""}
-                                    onClick={() => {
-                                      setAttendanceChecklist(prev => ({ ...prev, [name]: true }));
-                                      // If it was preset to absent-remarks, clear it
-                                      if (currentData.remarks === "Absent for weekly test.") {
-                                        setBatchGrades(prev => ({
-                                          ...prev,
-                                          [name]: { ...currentData, remarks: "" }
-                                        }));
-                                      }
-                                    }}
-                                  >
-                                    Present
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className={!isPresent ? styles.absentActive : ""}
-                                    onClick={() => {
-                                      setAttendanceChecklist(prev => ({ ...prev, [name]: false }));
-                                      // Auto-fill Absent details
-                                      setBatchGrades(prev => ({
+                  <form onSubmit={handleAttendanceSubmit}>
+                    <div className={styles.tableContainer} style={{ marginBottom: "24px" }}>
+                      {filteredStudents.length === 0 ? (
+                        <div style={{ padding: "40px", textAlign: "center", color: "var(--muted)" }}>
+                          No students are currently assigned to the **{selectedBatchFilter}** slot in your Google Sheet.
+                        </div>
+                      ) : (
+                        <table style={{ minWidth: "600px" }}>
+                          <thead>
+                            <tr>
+                              <th style={{ width: "40%" }}>Student Name</th>
+                              <th style={{ width: "20%" }}>Class</th>
+                              <th style={{ width: "20%", textAlign: "center" }}>Attendance Toggle</th>
+                              <th style={{ width: "20%", textAlign: "center" }}>Weekly Summary (So Far)</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filteredStudents.map(student => {
+                              const name = getValue(student, ["Student Name"]);
+                              const studentClass = getValue(student, ["Class", "class"]);
+                              const isPresent = attendanceChecklist[name] !== false;
+                              const prevAtt = getValue(student, ["Attendance"]) || "0/0 Days";
+
+                              return (
+                                <tr key={name}>
+                                  <td><strong>{name}</strong></td>
+                                  <td>
+                                    <span className={styles.badge} style={{ backgroundColor: "#E0F2FE", color: "#0369A1", fontWeight: 700 }}>
+                                      Class {studentClass || "—"}
+                                    </span>
+                                  </td>
+                                  <td style={{ textAlign: "center" }}>
+                                    <div className={styles.attendanceToggle} style={{ display: "inline-flex" }}>
+                                      <button
+                                        type="button"
+                                        className={isPresent ? styles.presentActive : ""}
+                                        onClick={() => setAttendanceChecklist(prev => ({ ...prev, [name]: true }))}
+                                        style={{ padding: "8px 16px", fontSize: "13px" }}
+                                      >
+                                        Present
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className={!isPresent ? styles.absentActive : ""}
+                                        onClick={() => setAttendanceChecklist(prev => ({ ...prev, [name]: false }))}
+                                        style={{ padding: "8px 16px", fontSize: "13px" }}
+                                      >
+                                        Absent
+                                      </button>
+                                    </div>
+                                  </td>
+                                  <td style={{ textAlign: "center" }}>
+                                    <span style={{ fontSize: "14px", fontWeight: 600, color: "var(--charcoal)" }}>
+                                      {prevAtt}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+
+                    <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px" }}>
+                      <button 
+                        type="button" 
+                        onClick={handleExitTeacherMode} 
+                        className={`${styles.btn} ${styles.btnOutline}`}
+                      >
+                        Cancel
+                      </button>
+                      <button 
+                        type="submit" 
+                        disabled={attendanceSubmitting || filteredStudents.length === 0}
+                        className={`${styles.btn} ${styles.btnPrimary}`}
+                        style={{ minWidth: "200px" }}
+                      >
+                        {attendanceSubmitting ? "Saving Logs..." : `💾 Save Daily Attendance`}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              ) : (
+                // VIEW: SATURDAY GRADE LOGGER
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1.5px solid var(--line)", paddingBottom: "12px", marginBottom: "20px", flexWrap: "wrap", gap: "12px" }}>
+                    <div>
+                      <h2 style={{ borderBottom: "none", paddingBottom: 0, marginBottom: "2px" }}>
+                        📝 Saturday Grade Logger — <span>{selectedBatchFilter} Slot</span>
+                      </h2>
+                      <p style={{ fontSize: "13px", color: "var(--muted)" }}>
+                        Enter weekly test scores and remarks.
+                      </p>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <label style={{ fontSize: "13px", fontWeight: 700, color: "var(--charcoal)" }}>Session Date:</label>
+                      <input 
+                        type="date" 
+                        className={styles.formControl} 
+                        style={{ width: "160px", padding: "6px 10px" }}
+                        value={inputDate}
+                        onChange={e => setInputDate(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <form onSubmit={handleBatchSessionSubmit}>
+                    <div className={styles.tableContainer} style={{ marginBottom: "24px" }}>
+                      {filteredStudents.length === 0 ? (
+                        <div style={{ padding: "40px", textAlign: "center", color: "var(--muted)" }}>
+                          No students are currently assigned to the **{selectedBatchFilter}** slot in your Google Sheet.
+                        </div>
+                      ) : (
+                        <table style={{ minWidth: "750px" }}>
+                          <thead>
+                            <tr>
+                              <th style={{ width: "20%" }}>Student Name</th>
+                              <th style={{ width: "10%" }}>Class</th>
+                              <th style={{ width: "15%", textAlign: "center" }}>Weekly Attendance</th>
+                              <th style={{ width: "15%" }}>Score (out of 20)</th>
+                              <th style={{ width: "40%" }}>Weekly Teacher Remarks</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filteredStudents.map(student => {
+                              const name = getValue(student, ["Student Name"]);
+                              const studentClass = getValue(student, ["Class", "class"]);
+                              const prevAtt = getValue(student, ["Attendance"]) || "0/0 Days";
+                              const currentData = batchGrades[name] || { marks: "", remarks: "" };
+
+                              return (
+                                <tr key={name}>
+                                  <td><strong>{name}</strong></td>
+                                  <td>
+                                    <span className={styles.badge} style={{ backgroundColor: "#E0F2FE", color: "#0369A1", fontWeight: 700 }}>
+                                      Class {studentClass || "—"}
+                                    </span>
+                                  </td>
+                                  <td style={{ textAlign: "center" }}>
+                                    <span style={{ fontSize: "14px", fontWeight: 600, color: "var(--charcoal)" }}>
+                                      {prevAtt}
+                                    </span>
+                                  </td>
+                                  <td>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      max={20}
+                                      placeholder="Marks"
+                                      className={styles.formControl}
+                                      style={{ padding: "6px" }}
+                                      value={currentData.marks}
+                                      onChange={e => setBatchGrades(prev => ({
                                         ...prev,
-                                        [name]: { marks: "0", remarks: "Absent for weekly test." }
-                                      }));
-                                    }}
-                                  >
-                                    Absent
-                                  </button>
-                                </div>
-                              </td>
-                              <td>
-                                <input
-                                  type="number"
-                                  min={0}
-                                  max={20}
-                                  placeholder="Marks"
-                                  className={styles.formControl}
-                                  style={{ padding: "6px" }}
-                                  value={currentData.marks}
-                                  onChange={e => setBatchGrades(prev => ({
-                                    ...prev,
-                                    [name]: { ...currentData, marks: e.target.value }
-                                  }))}
-                                />
-                              </td>
-                              <td>
-                                <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-                                  <input
-                                    type="text"
-                                    placeholder="remarks..."
-                                    className={styles.formControl}
-                                    style={{ padding: "6px", flex: 1 }}
-                                    value={currentData.remarks}
-                                    onChange={e => setBatchGrades(prev => ({
-                                      ...prev,
-                                      [name]: { ...currentData, remarks: e.target.value }
-                                    }))}
-                                  />
-                                  <select
-                                    className={styles.presetSelect}
-                                    style={{ 
-                                      padding: "6px", 
-                                      width: "110px", 
-                                      fontSize: "12px", 
-                                      borderRadius: "var(--border-radius)", 
-                                      border: "1.5px solid var(--line)",
-                                      backgroundColor: "#F8FAFC",
-                                      cursor: "pointer"
-                                    }}
-                                    value=""
-                                    onChange={e => {
-                                      if (e.target.value) {
-                                        setBatchGrades(prev => ({
+                                        [name]: { ...currentData, marks: e.target.value }
+                                      }))}
+                                    />
+                                  </td>
+                                  <td>
+                                    <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                                      <input
+                                        type="text"
+                                        placeholder="remarks..."
+                                        className={styles.formControl}
+                                        style={{ padding: "6px", flex: 1 }}
+                                        value={currentData.remarks}
+                                        onChange={e => setBatchGrades(prev => ({
                                           ...prev,
                                           [name]: { ...currentData, remarks: e.target.value }
-                                        }));
-                                      }
-                                    }}
-                                  >
-                                    <option value="" disabled>⚡ Presets</option>
-                                    {REMARK_PRESETS.map(preset => (
-                                      <option key={preset} value={preset}>{preset}</option>
-                                    ))}
-                                  </select>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
+                                        }))}
+                                      />
+                                      <select
+                                        className={styles.presetSelect}
+                                        style={{ 
+                                          padding: "6px", 
+                                          width: "110px", 
+                                          fontSize: "12px", 
+                                          borderRadius: "var(--border-radius)", 
+                                          border: "1.5px solid var(--line)",
+                                          backgroundColor: "#F8FAFC",
+                                          cursor: "pointer"
+                                        }}
+                                        value=""
+                                        onChange={e => {
+                                          if (e.target.value) {
+                                            setBatchGrades(prev => ({
+                                              ...prev,
+                                              [name]: { ...currentData, remarks: e.target.value }
+                                            }));
+                                          }
+                                        }}
+                                      >
+                                        <option value="" disabled>⚡ Presets</option>
+                                        {REMARK_PRESETS.map(preset => (
+                                          <option key={preset} value={preset}>{preset}</option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
 
-                <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px" }}>
-                  <button 
-                    type="button" 
-                    onClick={handleExitTeacherMode} 
-                    className={`${styles.btn} ${styles.btnOutline}`}
-                  >
-                    Cancel
-                  </button>
-                  <button 
-                    type="submit" 
-                    disabled={teacherSubmitting || filteredStudents.length === 0}
-                    className={`${styles.btn} ${styles.btnPrimary}`}
-                    style={{ minWidth: "200px" }}
-                  >
-                    {teacherSubmitting ? "Saving Logs..." : `💾 Save Session Data (${selectedBatchFilter})`}
-                  </button>
+                    <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px" }}>
+                      <button 
+                        type="button" 
+                        onClick={handleExitTeacherMode} 
+                        className={`${styles.btn} ${styles.btnOutline}`}
+                      >
+                        Cancel
+                      </button>
+                      <button 
+                        type="submit" 
+                        disabled={teacherSubmitting || filteredStudents.length === 0}
+                        className={`${styles.btn} ${styles.btnPrimary}`}
+                        style={{ minWidth: "200px" }}
+                      >
+                        {teacherSubmitting ? "Saving Logs..." : `💾 Save Session Data (${selectedBatchFilter})`}
+                      </button>
+                    </div>
+                  </form>
                 </div>
-              </form>
+              )}
             </div>
           )}
         </div>
